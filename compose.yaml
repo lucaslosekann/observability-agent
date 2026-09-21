@@ -1,0 +1,88 @@
+name: novvs-observability-agent
+
+services:
+  alloy:
+    image: grafana/alloy:v1.19.2
+    user: "473:473"
+    restart: unless-stopped
+    network_mode: host
+    command:
+      - run
+      - --server.http.listen-addr=127.0.0.1:12345
+      - --storage.path=/var/lib/alloy/data
+      - /etc/alloy/config.alloy
+    environment:
+      INSTALLATION_ID: ${INSTALLATION_ID:?defina INSTALLATION_ID no .env}
+      CUSTOMER_NAME: ${CUSTOMER_NAME:?defina CUSTOMER_NAME no .env}
+      ENVIRONMENT: ${ENVIRONMENT:?defina ENVIRONMENT no .env}
+      HOST_ID: ${HOST_ID:?defina HOST_ID no .env}
+      APPLICATION_VERSION: ${APPLICATION_VERSION:-}
+      CENTRAL_BASE_URL: ${CENTRAL_BASE_URL:?defina CENTRAL_BASE_URL no .env}
+      OBSERVABILITY_USERNAME: ${OBSERVABILITY_USERNAME:?defina OBSERVABILITY_USERNAME no .env}
+      OBSERVABILITY_PASSWORD: ${OBSERVABILITY_PASSWORD:?defina OBSERVABILITY_PASSWORD no .env}
+      TLS_VERIFY_CERTIFICATE: ${TLS_VERIFY_CERTIFICATE:-true}
+      POSTGRES_HOST: ${POSTGRES_HOST:?defina POSTGRES_HOST no .env}
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      POSTGRES_DATABASE: ${POSTGRES_DATABASE:?defina POSTGRES_DATABASE no .env}
+      POSTGRES_USER: ${POSTGRES_USER:?defina POSTGRES_USER no .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?defina POSTGRES_PASSWORD no .env}
+      POSTGRES_SSLMODE: ${POSTGRES_SSLMODE:-disable}
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    volumes:
+      - ./alloy/config.alloy:/etc/alloy/config.alloy:ro
+      - ./alloy/postgres-queries.yaml:/etc/alloy/postgres-queries.yaml:ro
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/host/root:ro,rslave
+      - alloy_data:/var/lib/alloy/data
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+  vector:
+    image: timberio/vector:0.58.0-debian
+    restart: unless-stopped
+    command:
+      - --config
+      - /etc/vector/vector.yaml
+      - --dangerously-allow-env-var-interpolation
+    environment:
+      INSTALLATION_ID: ${INSTALLATION_ID:?defina INSTALLATION_ID no .env}
+      CUSTOMER_NAME: ${CUSTOMER_NAME:?defina CUSTOMER_NAME no .env}
+      ENVIRONMENT: ${ENVIRONMENT:?defina ENVIRONMENT no .env}
+      HOST_ID: ${HOST_ID:?defina HOST_ID no .env}
+      APPLICATION_VERSION: ${APPLICATION_VERSION:-}
+      CENTRAL_BASE_URL: ${CENTRAL_BASE_URL:?defina CENTRAL_BASE_URL no .env}
+      OBSERVABILITY_USERNAME: ${OBSERVABILITY_USERNAME:?defina OBSERVABILITY_USERNAME no .env}
+      OBSERVABILITY_PASSWORD: ${OBSERVABILITY_PASSWORD:?defina OBSERVABILITY_PASSWORD no .env}
+      TLS_VERIFY_CERTIFICATE: ${TLS_VERIFY_CERTIFICATE:-true}
+      TLS_VERIFY_HOSTNAME: ${TLS_VERIFY_HOSTNAME:-true}
+      NOVVS_LOG_GLOB: ${NOVVS_LOG_GLOB:-*.jsonl}
+      VECTOR_BUFFER_MAX_BYTES: ${VECTOR_BUFFER_MAX_BYTES:-1073741824}
+      VECTOR_DANGEROUSLY_ALLOW_ENV_VAR_INTERPOLATION: "true"
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    volumes:
+      - ./vector/vector.yaml:/etc/vector/vector.yaml:ro
+      - ${NOVVS_LOG_DIR:?defina NOVVS_LOG_DIR no .env}:/var/log/novvs:ro
+      - vector_data:/var/lib/vector
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cap_drop:
+      - ALL
+    cap_add:
+      - DAC_READ_SEARCH
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  alloy_data:
+    name: novvs_observability_alloy_data
+  vector_data:
+    name: novvs_observability_vector_data

@@ -1,0 +1,104 @@
+logging {
+  level  = "info"
+  format = "json"
+}
+
+prometheus.exporter.unix "host" {
+  procfs_path = "/host/proc"
+  sysfs_path  = "/host/sys"
+  rootfs_path = "/host/root"
+
+  set_collectors = [
+    "cpu",
+    "diskstats",
+    "filesystem",
+    "loadavg",
+    "meminfo",
+    "stat",
+    "time",
+    "uname",
+  ]
+
+  filesystem {
+    fs_types_exclude     = "^(autofs|binfmt_misc|bpf|cgroup2?|configfs|debugfs|devpts|devtmpfs|fusectl|hugetlbfs|iso9660|mqueue|nsfs|overlay|proc|procfs|pstore|rpc_pipefs|securityfs|selinuxfs|squashfs|sysfs|tracefs)$"
+    mount_points_exclude = "^/(dev|proc|run/credentials/.+|sys|var/lib/docker/.+)($|/)"
+  }
+}
+
+prometheus.exporter.postgres "novvs" {
+  data_source_names = [
+    "postgresql://" + sys.env("POSTGRES_USER") + ":" + encoding.url_encode(sys.env("POSTGRES_PASSWORD")) + "@" + sys.env("POSTGRES_HOST") + ":" + sys.env("POSTGRES_PORT") + "/" + sys.env("POSTGRES_DATABASE") + "?sslmode=" + sys.env("POSTGRES_SSLMODE"),
+  ]
+
+  custom_queries_config_path = "/etc/alloy/postgres-queries.yaml"
+  disable_settings_metrics   = true
+}
+
+prometheus.relabel "host_identity" {
+  forward_to = [prometheus.remote_write.central.receiver]
+
+  rule {
+    target_label = "instance"
+    replacement  = sys.env("HOST_ID")
+  }
+}
+
+prometheus.scrape "host" {
+  targets         = prometheus.exporter.unix.host.targets
+  forward_to      = [prometheus.relabel.host_identity.receiver]
+  scrape_interval = "15s"
+  scrape_timeout  = "10s"
+  job_name        = "novvs-host"
+}
+
+prometheus.scrape "postgres" {
+  targets         = prometheus.exporter.postgres.novvs.targets
+  forward_to      = [prometheus.remote_write.central.receiver]
+  scrape_interval = "15s"
+  scrape_timeout  = "10s"
+  job_name        = "novvs-postgres"
+}
+
+prometheus.remote_write "central" {
+  external_labels = {
+    app                 = "novvs",
+    installation_id     = sys.env("INSTALLATION_ID"),
+    customer_name       = sys.env("CUSTOMER_NAME"),
+    environment         = sys.env("ENVIRONMENT"),
+    host_id             = sys.env("HOST_ID"),
+    application_version = sys.env("APPLICATION_VERSION"),
+  }
+
+  endpoint {
+    name           = "novvs-central"
+    url            = sys.env("CENTRAL_BASE_URL") + "/ingest/metrics/api/v1/write"
+    remote_timeout = "30s"
+
+    basic_auth {
+      username = sys.env("OBSERVABILITY_USERNAME")
+      password = sys.env("OBSERVABILITY_PASSWORD")
+    }
+
+    tls_config {
+      insecure_skip_verify = sys.env("TLS_VERIFY_CERTIFICATE") != "true"
+      min_version          = "TLS12"
+    }
+
+    queue_config {
+      min_shards           = 1
+      max_shards           = 4
+      capacity             = 10000
+      max_samples_per_send = 2000
+      batch_send_deadline  = "5s"
+      min_backoff          = "100ms"
+      max_backoff          = "30s"
+      retry_on_http_429    = true
+    }
+  }
+
+  wal {
+    truncate_frequency = "1h"
+    min_keepalive_time = "2h"
+    max_keepalive_time = "24h"
+  }
+}

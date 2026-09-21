@@ -1,0 +1,88 @@
+data_dir: /var/lib/vector
+
+sources:
+  novvs_requests:
+    type: file
+    include:
+      - /var/log/novvs/${NOVVS_LOG_GLOB}
+    read_from: beginning
+    ignore_checkpoints: false
+    ignore_not_found: true
+    fingerprint:
+      strategy: device_and_inode
+
+transforms:
+  parse_and_enrich:
+    type: remap
+    inputs:
+      - novvs_requests
+    drop_on_error: true
+    reroute_dropped: false
+    source: |-
+      event = parse_json!(.message)
+      timestamp_ms = to_int!(event.timestamp)
+
+      . = {
+        "@timestamp": from_unix_timestamp!(timestamp_ms, unit: "milliseconds"),
+        "timestamp": timestamp_ms,
+        "event_type": to_string!(event.eventType),
+        "request_id": to_string!(event.requestId),
+        "installation_id": get_env_var!("INSTALLATION_ID"),
+        "customer_name": get_env_var!("CUSTOMER_NAME"),
+        "environment": get_env_var!("ENVIRONMENT"),
+        "host_id": get_env_var!("HOST_ID"),
+        "app": "novvs"
+      }
+
+      if !is_null(event.httpMethod) { .http_method = to_string!(event.httpMethod) }
+      if !is_null(event.servicePath) { .service_path = to_string!(event.servicePath) }
+      if !is_null(event.operation) { .operation = to_string!(event.operation) }
+      if !is_null(event.remoteAddr) { .remote_addr = to_string!(event.remoteAddr) }
+      if !is_null(event.claimedUserId) { .claimed_user_id = to_string!(event.claimedUserId) }
+      if !is_null(event.service) { .service = to_string!(event.service) }
+      if !is_null(event.httpStatus) { .http_status = to_int!(event.httpStatus) }
+      if !is_null(event.status) { .status = to_string!(event.status) }
+      if !is_null(event.durationMs) { .duration_ms = to_float!(event.durationMs) }
+
+      application_version = get_env_var!("APPLICATION_VERSION")
+      if application_version != "" {
+        .application_version = application_version
+      }
+
+sinks:
+  central_opensearch:
+    type: elasticsearch
+    inputs:
+      - parse_and_enrich
+    endpoints:
+      - ${CENTRAL_BASE_URL}/ingest/logs
+    mode: bulk
+    api_version: v7
+    compression: gzip
+    healthcheck:
+      enabled: false
+    auth:
+      strategy: basic
+      user: ${OBSERVABILITY_USERNAME}
+      password: ${OBSERVABILITY_PASSWORD}
+    bulk:
+      action: index
+      index: novvs-requests-write
+    batch:
+      max_events: 1000
+      max_bytes: 5242880
+      timeout_secs: 5
+    buffer:
+      type: disk
+      max_size: ${VECTOR_BUFFER_MAX_BYTES}
+      when_full: drop_newest
+    request:
+      timeout_secs: 30
+      retry_attempts: 9223372036854775807
+      retry_initial_backoff_secs: 1
+      retry_max_duration_secs: 30
+    tls:
+      verify_certificate: ${TLS_VERIFY_CERTIFICATE}
+      verify_hostname: ${TLS_VERIFY_HOSTNAME}
+    acknowledgements:
+      enabled: true

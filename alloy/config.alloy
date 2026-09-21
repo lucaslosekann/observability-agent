@@ -34,6 +34,16 @@ prometheus.exporter.postgres "novvs" {
   disable_settings_metrics   = true
 }
 
+prometheus.exporter.blackbox "novvs_health" {
+  config = "{ modules: { http_2xx: { prober: http, timeout: 5s, http: { method: GET, follow_redirects: false, preferred_ip_protocol: ip4 } } } }"
+
+  target {
+    name    = "novvs-health"
+    address = sys.env("NOVVS_HEALTHCHECK_URL")
+    module  = "http_2xx"
+  }
+}
+
 prometheus.relabel "host_identity" {
   forward_to = [prometheus.remote_write.central.receiver]
 
@@ -57,6 +67,14 @@ prometheus.scrape "postgres" {
   scrape_interval = "15s"
   scrape_timeout  = "10s"
   job_name        = "novvs-postgres"
+}
+
+prometheus.scrape "novvs_health" {
+  targets         = prometheus.exporter.blackbox.novvs_health.targets
+  forward_to      = [prometheus.relabel.host_identity.receiver]
+  scrape_interval = "15s"
+  scrape_timeout  = "10s"
+  job_name        = "novvs-health"
 }
 
 prometheus.remote_write "central" {
